@@ -1,7 +1,6 @@
 FROM runpod/worker-comfyui:5.8.5-base
 
-# Pre-instalar dependencies de TODOS los custom nodes del network volume.
-# Esto evita que ComfyUI las instale al arrancar (lo cual es muy lento).
+# 1) Pre-instalar dependencies para ReActor y otros custom nodes comunes
 RUN pip install --no-cache-dir \
     insightface \
     onnxruntime-gpu \
@@ -30,7 +29,14 @@ RUN pip install --no-cache-dir \
     matrix-client==0.4.0 \
     transparent-background
 
-# Script de arranque: usa SYMLINKS al network volume (instantáneo)
+# 2) Clonar ReActor custom node DIRECTAMENTE en la imagen para que
+#    siempre esté disponible (no depende de symlinks del network volume)
+RUN cd /comfyui/custom_nodes && \
+    git clone --depth 1 https://github.com/Gourieff/ComfyUI-ReActor.git comfyui-reactor-node && \
+    cd comfyui-reactor-node && \
+    pip install --no-cache-dir -r requirements.txt || true
+
+# 3) Script de arranque: GPU check + ComfyUI + handler + symlinks
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
