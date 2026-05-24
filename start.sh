@@ -4,47 +4,60 @@
 echo ">>> [Paula Worker] Iniciando..."
 START=$(date +%s)
 
-# === 1) Custom nodes (folder-level: base no los tiene) ===
-for SRC in "/runpod-volume/ComfyUI/custom_nodes" "/workspace/ComfyUI/custom_nodes"; do
-  if [ -d "$SRC" ]; then
-    echo ">>> [Paula] custom_nodes desde $SRC"
-    for dir in "$SRC"/*/; do
-      [ -d "$dir" ] || continue
-      name=$(basename "$dir")
-      target="/comfyui/custom_nodes/$name"
-      if [ ! -e "$target" ]; then
-        ln -s "$dir" "$target"
-      fi
-    done
+# Network volume real path es runpod-slim/ComfyUI (descubierto SSH al pod)
+COMFY_VOL_BASE=""
+for CAND in \
+    "/runpod-volume/runpod-slim/ComfyUI" \
+    "/runpod-volume/ComfyUI" \
+    "/workspace/runpod-slim/ComfyUI" \
+    "/workspace/ComfyUI"; do
+  if [ -d "$CAND/models" ]; then
+    COMFY_VOL_BASE="$CAND"
+    echo ">>> [Paula] Volume ComfyUI detectado en: $COMFY_VOL_BASE"
     break
   fi
 done
 
+if [ -z "$COMFY_VOL_BASE" ]; then
+  echo ">>> [Paula] WARN: no se encontró ComfyUI/models en el volume"
+fi
+
+# === 1) Custom nodes (folder-level) ===
+if [ -d "$COMFY_VOL_BASE/custom_nodes" ]; then
+  echo ">>> [Paula] custom_nodes desde $COMFY_VOL_BASE/custom_nodes"
+  for dir in "$COMFY_VOL_BASE/custom_nodes"/*/; do
+    [ -d "$dir" ] || continue
+    name=$(basename "$dir")
+    target="/comfyui/custom_nodes/$name"
+    if [ ! -e "$target" ]; then
+      ln -s "$dir" "$target"
+    fi
+  done
+fi
+
 # === 2) Models PER-FILE (dirs ya existen en el base image) ===
-for SRC in "/runpod-volume/ComfyUI/models" "/workspace/ComfyUI/models"; do
-  if [ -d "$SRC" ]; then
-    echo ">>> [Paula] models desde $SRC"
-    for subdir in "$SRC"/*/; do
-      [ -d "$subdir" ] || continue
-      name=$(basename "$subdir")
-      target_dir="/comfyui/models/$name"
-      mkdir -p "$target_dir"
-      for f in "$subdir"*; do
-        [ -e "$f" ] || continue
-        fname=$(basename "$f")
-        ln -sfn "$f" "$target_dir/$fname"
-      done
-      count=$(ls -1 "$subdir" 2>/dev/null | wc -l)
-      echo "   + models/$name: $count archivos"
+if [ -d "$COMFY_VOL_BASE/models" ]; then
+  echo ">>> [Paula] models desde $COMFY_VOL_BASE/models"
+  for subdir in "$COMFY_VOL_BASE/models"/*/; do
+    [ -d "$subdir" ] || continue
+    name=$(basename "$subdir")
+    target_dir="/comfyui/models/$name"
+    mkdir -p "$target_dir"
+    cnt=0
+    for f in "$subdir"*; do
+      [ -e "$f" ] || continue
+      fname=$(basename "$f")
+      ln -sfn "$f" "$target_dir/$fname"
+      cnt=$((cnt+1))
     done
-    break
-  fi
-done
+    echo "   + models/$name: $cnt archivos"
+  done
+fi
 
 ELAPSED=$(($(date +%s) - START))
 echo ">>> [Paula] symlinks listos en ${ELAPSED}s."
 
-# === 3) Bloque base start.sh ===
+# === 3) Bloque base start.sh de runpod/worker-comfyui ===
 TCMALLOC="$(ldconfig -p | grep -Po "libtcmalloc.so.\d" | head -n 1)"
 export LD_PRELOAD="${TCMALLOC}"
 
