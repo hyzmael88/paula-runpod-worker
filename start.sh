@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Paula Worker startup: per-file symlinks + ComfyUI + handler
+# Paula Worker startup: per-file symlinks with target-rewrite + ComfyUI + handler
 
 echo ">>> [Paula Worker] Iniciando..."
 START=$(date +%s)
 
-# Network volume real path es runpod-slim/ComfyUI (descubierto SSH al pod)
+# Detectar donde está realmente el ComfyUI del volume
 COMFY_VOL_BASE=""
 for CAND in \
     "/runpod-volume/runpod-slim/ComfyUI" \
@@ -22,6 +22,24 @@ if [ -z "$COMFY_VOL_BASE" ]; then
   echo ">>> [Paula] WARN: no se encontró ComfyUI/models en el volume"
 fi
 
+# Helper: resolver symlinks reescribiendo /workspace/ -> /runpod-volume/
+# para manejar symlinks que se hicieron en un pod donde el volume estaba
+# montado en /workspace.
+resolve_target() {
+  local src="$1"
+  if [ -L "$src" ]; then
+    local tgt=$(readlink "$src")
+    if [[ "$tgt" == /workspace/* ]]; then
+      tgt="/runpod-volume/${tgt#/workspace/}"
+    elif [[ "$tgt" != /* ]]; then
+      tgt="$(cd "$(dirname "$src")" 2>/dev/null && pwd)/$tgt"
+    fi
+    echo "$tgt"
+  else
+    echo "$src"
+  fi
+}
+
 # === 1) Custom nodes (folder-level) ===
 if [ -d "$COMFY_VOL_BASE/custom_nodes" ]; then
   echo ">>> [Paula] custom_nodes desde $COMFY_VOL_BASE/custom_nodes"
@@ -35,7 +53,7 @@ if [ -d "$COMFY_VOL_BASE/custom_nodes" ]; then
   done
 fi
 
-# === 2) Models PER-FILE (dirs ya existen en el base image) ===
+# === 2) Models PER-FILE con resolución de symlinks rotos ===
 if [ -d "$COMFY_VOL_BASE/models" ]; then
   echo ">>> [Paula] models desde $COMFY_VOL_BASE/models"
   for subdir in "$COMFY_VOL_BASE/models"/*/; do
@@ -44,13 +62,19 @@ if [ -d "$COMFY_VOL_BASE/models" ]; then
     target_dir="/comfyui/models/$name"
     mkdir -p "$target_dir"
     cnt=0
+    skip=0
     for f in "$subdir"*; do
-      [ -e "$f" ] || continue
+      [ -e "$f" ] || [ -L "$f" ] || continue
       fname=$(basename "$f")
-      ln -sfn "$f" "$target_dir/$fname"
+      resolved=$(resolve_target "$f")
+      if [ ! -e "$resolved" ]; then
+        skip=$((skip+1))
+        continue
+      fi
+      ln -sfn "$resolved" "$target_dir/$fname"
       cnt=$((cnt+1))
     done
-    echo "   + models/$name: $cnt archivos"
+    echo "   + models/$name: $cnt linkeados (skip=$skip)"
   done
 fi
 
