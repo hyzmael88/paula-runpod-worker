@@ -1,22 +1,43 @@
 #!/bin/bash
+set -e
 
-echo ">>> Iniciando worker de Paula..."
+echo ">>> [Paula Worker] Iniciando..."
+START=$(date +%s)
 
-# El network volume puede estar en /runpod-volume o /workspace dependiendo de la config
+# Symlink custom nodes del network volume (instantáneo, no copia archivos)
 for SRC in "/runpod-volume/ComfyUI/custom_nodes" "/workspace/ComfyUI/custom_nodes"; do
   if [ -d "$SRC" ]; then
-    echo ">>> Copiando custom nodes desde $SRC hacia /comfyui/custom_nodes/"
+    echo ">>> [Paula Worker] Enlazando custom nodes desde $SRC"
     for dir in "$SRC"/*/; do
       [ -d "$dir" ] || continue
       name=$(basename "$dir")
-      echo "    - Copiando: $name"
-      cp -rf "$dir" "/comfyui/custom_nodes/$name"
+      target="/comfyui/custom_nodes/$name"
+      if [ ! -e "$target" ]; then
+        ln -s "$dir" "$target"
+        echo "    + $name"
+      fi
     done
-    echo ">>> Custom nodes listos."
     break
   fi
 done
 
-echo ">>> Iniciando handler de RunPod..."
-exec python -u /handler.py
+# Symlink models del network volume si existen
+for SRC in "/runpod-volume/ComfyUI/models" "/workspace/ComfyUI/models"; do
+  if [ -d "$SRC" ]; then
+    echo ">>> [Paula Worker] Enlazando models desde $SRC"
+    for dir in "$SRC"/*/; do
+      [ -d "$dir" ] || continue
+      name=$(basename "$dir")
+      target="/comfyui/models/$name"
+      if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+        ln -s "$dir" "$target"
+      fi
+    done
+    break
+  fi
+done
 
+ELAPSED=$(($(date +%s) - START))
+echo ">>> [Paula Worker] Setup en ${ELAPSED}s. Iniciando handler..."
+
+exec python -u /handler.py
