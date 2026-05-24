@@ -1,9 +1,16 @@
 FROM runpod/worker-comfyui:5.8.5-base
 
-# 1) Pre-instalar dependencies para ReActor y otros custom nodes comunes
+# 1) Pre-instalar TODAS las deps de ReActor + custom nodes comunes
+#    OJO: albumentations, segment_anything, ultralytics SON requirements
+#    de ReActor; sin ellas el __init__.py falla y ComfyUI no registra
+#    "ReActorFaceSwap".
 RUN pip install --no-cache-dir \
+    albumentations \
+    segment_anything \
+    ultralytics \
     insightface \
     onnxruntime-gpu \
+    opencv-python \
     opencv-python-headless \
     protobuf \
     color-matcher \
@@ -29,14 +36,14 @@ RUN pip install --no-cache-dir \
     matrix-client==0.4.0 \
     transparent-background
 
-# 2) Clonar ReActor custom node DIRECTAMENTE en la imagen para que
-#    siempre esté disponible (no depende de symlinks del network volume)
+# 2) Clonar ReActor + correr install.py (descarga inswapper_128.onnx)
 RUN cd /comfyui/custom_nodes && \
-    git clone --depth 1 https://github.com/Gourieff/ComfyUI-ReActor.git comfyui-reactor-node && \
-    cd comfyui-reactor-node && \
-    pip install --no-cache-dir -r requirements.txt || true
+    git clone --depth 1 https://github.com/Gourieff/ComfyUI-ReActor.git && \
+    cd ComfyUI-ReActor && \
+    pip install --no-cache-dir -r requirements.txt && \
+    python install.py || echo "install.py warning ignored"
 
-# 3) Script de arranque: GPU check + ComfyUI + handler + symlinks
+# 3) Script de arranque
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
