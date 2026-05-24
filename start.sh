@@ -1,72 +1,71 @@
 #!/usr/bin/env bash
-# Paula Worker startup: symlinks + ComfyUI + handler
+# Paula Worker startup: per-file symlinks + ComfyUI + handler
 
 echo ">>> [Paula Worker] Iniciando..."
 START=$(date +%s)
 
-# === 1) SYMLINKS desde el network volume hacia /comfyui ===
+# === 1) Custom nodes (folder-level: base no los tiene) ===
 for SRC in "/runpod-volume/ComfyUI/custom_nodes" "/workspace/ComfyUI/custom_nodes"; do
   if [ -d "$SRC" ]; then
-    echo ">>> [Paula Worker] Enlazando custom nodes desde $SRC"
+    echo ">>> [Paula] custom_nodes desde $SRC"
     for dir in "$SRC"/*/; do
       [ -d "$dir" ] || continue
       name=$(basename "$dir")
       target="/comfyui/custom_nodes/$name"
       if [ ! -e "$target" ]; then
         ln -s "$dir" "$target"
-        echo " + $name"
       fi
     done
     break
   fi
 done
 
+# === 2) Models PER-FILE (dirs ya existen en el base image) ===
 for SRC in "/runpod-volume/ComfyUI/models" "/workspace/ComfyUI/models"; do
   if [ -d "$SRC" ]; then
-    echo ">>> [Paula Worker] Enlazando models desde $SRC"
-    for dir in "$SRC"/*/; do
-      [ -d "$dir" ] || continue
-      name=$(basename "$dir")
-      target="/comfyui/models/$name"
-      if [ ! -e "$target" ] && [ ! -L "$target" ]; then
-        ln -s "$dir" "$target"
-      fi
+    echo ">>> [Paula] models desde $SRC"
+    for subdir in "$SRC"/*/; do
+      [ -d "$subdir" ] || continue
+      name=$(basename "$subdir")
+      target_dir="/comfyui/models/$name"
+      mkdir -p "$target_dir"
+      for f in "$subdir"*; do
+        [ -e "$f" ] || continue
+        fname=$(basename "$f")
+        ln -sfn "$f" "$target_dir/$fname"
+      done
+      count=$(ls -1 "$subdir" 2>/dev/null | wc -l)
+      echo "   + models/$name: $count archivos"
     done
     break
   fi
 done
 
 ELAPSED=$(($(date +%s) - START))
-echo ">>> [Paula Worker] Symlinks listos en ${ELAPSED}s."
+echo ">>> [Paula] symlinks listos en ${ELAPSED}s."
 
-# === 2) Bloque del start.sh base de runpod/worker-comfyui ===
-
-# tcmalloc para mejor manejo de memoria
+# === 3) Bloque base start.sh ===
 TCMALLOC="$(ldconfig -p | grep -Po "libtcmalloc.so.\d" | head -n 1)"
 export LD_PRELOAD="${TCMALLOC}"
 
-# GPU pre-flight
-echo "worker-comfyui: Checking GPU availability..."
+echo "worker-comfyui: GPU check..."
 if ! GPU_CHECK=$(python3 -c "
 import torch
 try:
     torch.cuda.init()
-    name = torch.cuda.get_device_name(0)
-    print(f'OK: {name}')
+    print(f'OK: {torch.cuda.get_device_name(0)}')
 except Exception as e:
     print(f'FAIL: {e}')
     exit(1)
 " 2>&1); then
-  echo "worker-comfyui: GPU is not available. $GPU_CHECK"
+  echo "worker-comfyui: GPU not available. $GPU_CHECK"
   exit 1
 fi
-echo "worker-comfyui: GPU available - $GPU_CHECK"
+echo "worker-comfyui: $GPU_CHECK"
 
-# ComfyUI-Manager en modo offline (no bloquea por updates)
-comfy-manager-set-mode offline || echo "worker-comfyui - Could not set ComfyUI-Manager network_mode" >&2
+comfy-manager-set-mode offline 2>/dev/null || true
 
 echo "worker-comfyui: Starting ComfyUI"
-
 : "${COMFY_LOG_LEVEL:=DEBUG}"
 COMFY_PID_FILE="/tmp/comfyui.pid"
 
